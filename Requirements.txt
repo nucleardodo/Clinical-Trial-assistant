@@ -1,9 +1,9 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
 streamlit>=1.45.0
 pandas>=2.2.0
 plotly>=6.0.0
-transformers>=4.53.0
---find-links https://download.pytorch.org/whl/cpu/torch_stable.html
-torch>=2.7.0--index-url https://download.pytorch.org/whl/cpu
+transformers>=4.40.0
+torch>=2.2.0
 sentencepiece>=0.2.0
 safetensors>=0.5.0
-accelerate>=1.8.0
+accelerate>=0.30.0
