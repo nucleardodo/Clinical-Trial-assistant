@@ -125,6 +125,11 @@ def run_ai_prediction(df_to_predict):
     st.session_state.site_report_text = report_part.strip()
     return pd.DataFrame(updated_records)
 
+# Initialize global states if not present
+if "ts_val" not in st.session_state: st.session_state.ts_val = 490
+if "ce_val" not in st.session_state: st.session_state.ce_val = 112
+if "cv_val" not in st.session_state: st.session_state.cv_val = 12
+
 # ==========================================
 # OPERATIONAL ANALYSIS TABS
 # ==========================================
@@ -134,6 +139,7 @@ tab1, tab2, tab3 = st.tabs([
     "📋 Global Site-Level Breakdown"
 ])
 
+# --- TAB 1 ---
 with tab1:
     st.subheader("Clinical Sites Baseline Registry")
     st.dataframe(st.session_state.site_impact_df, use_container_width=True)
@@ -141,18 +147,63 @@ with tab1:
         st.session_state.site_impact_df = run_ai_prediction(st.session_state.site_impact_df)
         st.rerun()
 
-if "ts_val" not in st.session_state: st.session_state.ts_val = 490
-if "ce_val" not in st.session_state: st.session_state.ce_val = 112
-if "cv_val" not in st.session_state: st.session_state.cv_val = 12
-
+# --- TAB 2: EXECUTIVE GRAPHICAL TIMELINE ---
 with tab2:
-    st.subheader("Global Trial Metrics Configuration")
-    st.session_state.ts_val = st.number_input("Target Number of Subjects", value=st.session_state.ts_val)
-    st.session_state.ce_val = st.number_input("Currently Enrolled", value=st.session_state.ce_val)
+    st.subheader("🔮 Executive Graphical Timeline")
+    
+    # Earliest slider column organization layout
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.session_state.ts_val = st.slider("Target Number of Subjects", min_value=10, max_value=2000, value=st.session_state.ts_val, key="early_ts")
+    with c2:
+        st.session_state.ce_val = st.slider("Currently Enrolled", min_value=0, max_value=st.session_state.ts_val, value=st.session_state.ce_val, key="early_ce")
+    with c3:
+        st.session_state.cv_val = st.slider("Current Volatility %", min_value=0, max_value=100, value=st.session_state.cv_val, key="early_cv")
+        
+    remaining_needed = max(st.session_state.ts_val - st.session_state.ce_val, 0)
+    
+    total_baseline_velocity = st.session_state.site_impact_df["baseline_enrollment_rate"].sum()
+    total_predicted_velocity = st.session_state.site_impact_df["predicted_baseline_rate"].sum()
+    
+    # Volatility impact modifier equations
+    volatility_factor = 1 + (st.session_state.cv_val / 100.0)
+    weeks_baseline = remaining_needed / total_baseline_velocity if total_baseline_velocity > 0 else 0
+    weeks_predicted = (remaining_needed / total_predicted_velocity if total_predicted_velocity > 0 else 0) * volatility_factor
+    
+    start_date = datetime.date(2026, 7, 4)
+    baseline_end = start_date + datetime.timedelta(weeks=weeks_baseline)
+    predicted_end = start_date + datetime.timedelta(weeks=weeks_predicted)
+    delay_days = max((predicted_end - baseline_end).days, 0)
+    
+    # Original dynamic metric output block
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Planned Completion (Baseline)", baseline_end.strftime("%b %d, %Y"))
+    m2.metric("AI Risk-Adjusted Completion", predicted_end.strftime("%b %d, %Y"))
+    m3.metric("Projected Timeline Slippage", f"+{delay_days} Days" if delay_days > 0 else "On Schedule", delta=f"{round(delay_days/7, 1)} wks" if delay_days > 0 else None, delta_color="inverse")
+    
+    st.markdown("### Cumulative Enrollment Trajectory Projections")
+    forecast_data = []
+    max_weeks = int(max(weeks_baseline, weeks_predicted, 4)) + 4
+    
+    for w in range(max_weeks):
+        target_dt = start_date + datetime.timedelta(weeks=w)
+        
+        # Planned Curve
+        b_count = min(st.session_state.ce_val + (total_baseline_velocity * w), st.session_state.ts_val)
+        forecast_data.append({"Date": target_dt, "Patients": b_count, "Scenario": "Planned Target Timeline"})
+        
+        # Risk & Volatility Adjusted Curve
+        adjusted_velocity = total_predicted_velocity / volatility_factor
+        p_count = min(st.session_state.ce_val + (adjusted_velocity * w), st.session_state.ts_val)
+        forecast_data.append({"Date": target_dt, "Patients": p_count, "Scenario": "AI Risk-Adjusted Projection"})
+        
+    df_forecast = pd.DataFrame(forecast_data)
+    fig_forecast = px.line(df_forecast, x="Date", y="Patients", color="Scenario", color_discrete_map={"Planned Target Timeline": "#1f77b4", "AI Risk-Adjusted Projection": "#d62728"})
+    fig_forecast.add_hline(y=st.session_state.ts_val, line_dash="dash", line_color="green", annotation_text="Target Enrollment Cap")
+    fig_forecast.update_layout(template="plotly_white", height=350)
+    st.plotly_chart(fig_forecast, use_container_width=True)
 
-# ==========================================
-# FEATURE 3: GLOBAL SITE-LEVEL BREAKDOWN
-# ==========================================
+# --- TAB 3: GLOBAL SITE-LEVEL BREAKDOWN ---
 with tab3:
     st.subheader("📋 Live Interactive Site Breakout & Configuration Dashboard")
     st.info("💡 **Reactive Mode Active:** Modifying either the **Baseline Enrollment Rate** or **Screen Failure Rate** recalculates the metric boundaries, updating both the Site Health status indicator and the comparative charts instantly.")
@@ -248,7 +299,15 @@ with tab3:
     fig_bars = go.Figure()
     fig_bars.add_trace(go.Bar(y=chart_y_sites, x=chart_x_enrolled, name="Patients Enrolled", orientation='h', marker_color='#2ca02c'))
     fig_bars.add_trace(go.Bar(y=chart_y_sites, x=chart_x_target, name="Target Allocation Space", orientation='h', marker_color='#1f77b4'))
-    fig_bars.update_layout(barmode='stack', title="Site-Level Patient Volume Progression Stack Overview", template="plotly_white", height=220)
+    
+    # FIXED: Added explicit type tracking and automatic margin accommodations to preserve site labels
+    fig_bars.update_layout(
+        barmode='stack', 
+        title="Site-Level Patient Volume Progression Stack Overview", 
+        template="plotly_white", 
+        height=260,
+        yaxis=dict(type='category', automargin=True)
+    )
     st.plotly_chart(fig_bars, use_container_width=True)
 
     df_gantt = pd.DataFrame(gantt_records)
