@@ -24,7 +24,14 @@ st.caption("Offline predictive engine with professional Plotly interactive visua
 @st.cache_resource(show_spinner="Loading tokenizers and model weights into memory...")
 def load_model_and_tokenizer():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    model = AutoModelForCausalLM.from_pretrained(MODEL_NAME)
+    
+    # OPTIMIZATION: Load in float16 precision and map directly to CPU low-memory mode
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_NAME,
+        torch_dtype=torch.float16,  # Cuts RAM usage in half
+        low_cpu_mem_usage=True,     # Optimizes memory allocation profile
+        device_map="cpu"            # Explicitly pins to cloud CPU architecture
+    )
     model.eval()
     return tokenizer, model
 
