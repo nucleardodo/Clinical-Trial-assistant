@@ -6,13 +6,6 @@ from site_metrics import SiteMetrics
 from clinical_reasoner import ClinicalReasoner
 from recommendation_engine import RecommendationEngine
 from executive_summary import ExecutiveSummaryEngine
-
-from ai_engine import AIEngine
-from prompt_builder import PromptBuilder
-from intent_classifier import IntentClassifier
-from site_selector import SiteSelector
-from response_formatter import ResponseFormatter
-from conversation_context import ConversationContext
 import requests
 import plotly.graph_objects as go
 import plotly.express as px
@@ -28,36 +21,6 @@ HF_API_URL = f"https://api-inference.huggingface.co/models/{MODEL_NAME}"
 
 st.title("🧪 Clinical Trial Feasibility & Visual Forecasting Suite")
 st.caption("Hosted inference edition for Hugging Face Spaces free CPU hosting.")
-
-if "metrics" not in st.session_state:
-    st.session_state.metrics = None
-
-if "reasoner" not in st.session_state:
-    st.session_state.reasoner = None
-
-if "executive" not in st.session_state:
-    st.session_state.executive = None
-
-if "recommendation_engine" not in st.session_state:
-    st.session_state.recommendation_engine = RecommendationEngine()
-
-if "intent_classifier" not in st.session_state:
-    st.session_state.intent_classifier = IntentClassifier()
-
-if "site_selector" not in st.session_state:
-    st.session_state.site_selector = SiteSelector()
-
-if "prompt_builder" not in st.session_state:
-    st.session_state.prompt_builder = PromptBuilder()
-
-if "formatter" not in st.session_state:
-    st.session_state.formatter = ResponseFormatter()
-
-if "conversation" not in st.session_state:
-    st.session_state.conversation = ConversationContext()
-
-if "ai_engine" not in st.session_state:
-    st.session_state.ai_engine = AIEngine()
 
 with st.sidebar:
     st.header("Deployment Mode")
@@ -191,124 +154,25 @@ def parse_adjusted_rates(response, df_to_predict):
         return fallback_rates, response.strip()
 
 
-def run_ai_prediction(
-    df_to_predict: pd.DataFrame,
-    protocol_restrictions: str,
-) -> pd.DataFrame:
-    """
-    Modular analytics implementation.
-
-    This replaces the previous heuristic / prompt-based
-    implementation while preserving the same dataframe
-    structure expected by the UI.
-    """
-
-    if df_to_predict.empty:
+def run_ai_prediction(df_to_predict, protocol_restrictions):
+    if not protocol_restrictions.strip():
+        st.warning("Please enter protocol restrictions before generating a prediction.")
         return df_to_predict
 
-    # ----------------------------------------------------
-    # Build analytics engine
-    # ----------------------------------------------------
+    site_summary = df_to_predict[["site_id", "site_name", "baseline_enrollment_rate", "screen_failure_rate"]].to_dict(orient="records")
 
-    metrics = SiteMetrics(df_to_predict)
+    system_prompt = (
+        "You are a clinical trial feasibility assistant. "
+        "Analyze the site metrics and protocol restrictions. "
+        "You must provide your response in two strict parts separated by '---':"
+        "Part 1: Provide a raw python dictionary mapping site IDs to estimated new enrollment rates based strictly on your logical analysis of the restrictions. Format exactly like this, with NO formatting or markdown backticks:"
+        "{'SITE-001': value, 'SITE-002': value, 'SITE-003': value}"
+        "---"
+        "Part 2: Provide your qualitative professional assessment report with bullet points detailing performance risks."
+    )
 
-    metrics.calculate_metrics()
-
-    reasoner = ClinicalReasoner(metrics)
-
-    recommender = RecommendationEngine()
-
-    updated_rows = []
-
-    report = []
-
-    # ----------------------------------------------------
-    # Evaluate every site
-    # ----------------------------------------------------
-
-    for _, row in metrics.metrics_df.iterrows():
-
-        site_id = row["site_id"]
-
-        assessment = reasoner.assess(site_id)
-
-        recommendation = (
-            recommender.build_plan(
-                assessment
-            )
-            if assessment
-            else None
-        )
-
-        health = row["calculated_health"]
-
-        baseline = float(
-            row["baseline_enrollment_rate"]
-        )
-
-        efficiency = float(
-            row.get(
-                "enrollment_efficiency",
-                1.0,
-            )
-        )
-
-        projected_rate = round(
-            baseline * efficiency,
-            2,
-        )
-
-        projected_sf = float(
-            row.get(
-                "screen_failure_rate",
-                0,
-            )
-        )
-
-        updated_rows.append(
-            {
-                "site_id": row["site_id"],
-                "site_name": row["site_name"],
-                "baseline_enrollment_rate": baseline,
-                "screen_failure_rate": projected_sf,
-                "predicted_baseline_rate": projected_rate,
-                "predicted_screen_failure_rate": projected_sf,
-                "site_health": health,
-            }
-        )
-
-        report.append(
-            {
-                "site": row["site_name"],
-                "health": health,
-                "priority": (
-                    recommendation.priority
-                    if recommendation
-                    else "Medium"
-                ),
-                "issues": (
-                    ", ".join(
-                        assessment.bottlenecks
-                    )
-                    if assessment
-                    else ""
-                ),
-            }
-        )
-
-    # ----------------------------------------------------
-    # Executive Summary
-    # ----------------------------------------------------
-
-    executive = ExecutiveSummaryEngine(metrics)
-
-    summary = executive.generate()
-
-    markdown = executive.to_markdown(summary)
-
-    st.session_state.site_report_text = markdown
-
-    return pd.DataFrame(updated_rows)
+    user_prompt = f"""Baseline site data:
+{site_summary}
 
 New Protocol Restrictions:
 {protocol_restrictions}
@@ -354,124 +218,11 @@ Evaluate the data and generate both the dynamic rate dictionary and text report.
     return pd.DataFrame(updated_records)
 
 
-def run_diagnostic_report(question: str) -> str:
-    """
-    New modular AI diagnostic pipeline.
-    """
+def run_diagnostic_report(user_diagnostic_query, protocol_restrictions, df_breakdown, edited_df_tab3):
+    current_metrics_str = df_breakdown[["Site ID", "Site Location", "Timeline Slippage (Days)", "Current Health"]].to_dict(orient="records")
+    raw_input_str = edited_df_tab3[["site_id", "baseline_enrollment_rate", "screen_failure_rate", "predicted_baseline_rate"]].to_dict(orient="records")
 
-    metrics = st.session_state.metrics
-
-    if metrics is None:
-        metrics = SiteMetrics(
-            st.session_state.site_impact_df
-        )
-
-        metrics.calculate_metrics()
-
-        st.session_state.metrics = metrics
-
-    reasoner = st.session_state.reasoner
-
-    if reasoner is None:
-        reasoner = ClinicalReasoner(metrics)
-        st.session_state.reasoner = reasoner
-
-    recommender = st.session_state.recommendation_engine
-
-    executive = st.session_state.executive
-
-    if executive is None:
-        executive = ExecutiveSummaryEngine(metrics)
-        st.session_state.executive = executive
-
-    classifier = st.session_state.intent_classifier
-    selector = st.session_state.site_selector
-    prompt_builder = st.session_state.prompt_builder
-    ai_engine = st.session_state.ai_engine
-    formatter = st.session_state.formatter
-
-    # -------------------------------------
-    # Determine intent
-    # -------------------------------------
-
-    intent = classifier.classify(question)
-
-    # -------------------------------------
-    # Identify site
-    # -------------------------------------
-
-    available_sites = metrics.get_all_sites()
-
-    # -------------------------------------
-# Site Selection
-# -------------------------------------
-
-metrics = st.session_state.metrics
-
-available_sites = metrics.get_all_sites()
-
-selected_site = (
-    st.session_state.site_selector.select(
-        question=user_diagnostic_query,
-        available_sites=available_sites
-    )
-)
-
-if selected_site is None:
-
-    st.warning(
-        "No site identified. Using portfolio analysis."
-    )
-    )
-
-    assessment = None
-    recommendation = None
-
-    if selected_site:
-
-        assessment = reasoner.assess(
-            selected_site
-        )
-
-        if assessment:
-
-            recommendation = (
-                recommender.build_plan(
-                    assessment
-                )
-            )
-
-    executive_summary = executive.generate()
-
-    prompt = prompt_builder.build_prompt(
-
-        question=question,
-
-        intent=intent,
-
-        assessment=assessment,
-
-        recommendation=recommendation,
-
-        executive_summary=executive_summary
-
-    )
-
-    answer = ai_engine.generate(prompt)
-
-    answer = formatter.format(answer)
-
-    st.session_state.conversation.add(
-        role="user",
-        message=question
-    )
-
-    st.session_state.conversation.add(
-        role="assistant",
-        message=answer
-    )
-
-    return answer
+    diagnostic_sys_prompt = """You are an expert clinical trial auditor. You must execute a structured 5 Whys Root-Cause Analysis.
 
 You are strictly required to format your output using this exact structural layout for the analysis block. Do not use generic markdown text blocks:
 
@@ -539,19 +290,6 @@ protocol_restrictions = st.text_area(
 )
 
 if "site_impact_df" not in st.session_state:
-    st.session_state.metrics = SiteMetrics(
-    st.session_state.site_impact_df
-)
-
-st.session_state.metrics.calculate_metrics()
-
-st.session_state.reasoner = ClinicalReasoner(
-    st.session_state.metrics
-)
-
-st.session_state.executive = ExecutiveSummaryEngine(
-    st.session_state.metrics
-)
     st.session_state.site_impact_df = pd.DataFrame([
         {"site_id": "SITE-001", "site_name": "Ahmedabad Research Center", "baseline_enrollment_rate": 5.2, "screen_failure_rate": 0.18, "predicted_baseline_rate": 4.10, "predicted_screen_failure_rate": 0.22, "site_health": "Good"},
         {"site_id": "SITE-002", "site_name": "Surat Clinical Institute", "baseline_enrollment_rate": 3.9, "screen_failure_rate": 0.24, "predicted_baseline_rate": 2.80, "predicted_screen_failure_rate": 0.31, "site_health": "Fair"},
@@ -580,15 +318,8 @@ with tab1:
     if st.button("Generate Per-Site Prediction", type="primary", key="btn_site_impact"):
         st.session_state.site_impact_df = run_ai_prediction(st.session_state.site_impact_df, protocol_restrictions)
         st.rerun()
-    report = (
-    st.session_state.executive.generate()
-)
-
-st.markdown(
-    st.session_state.executive.to_markdown(
-        report
-    )
-)
+    st.markdown("### AI Assessment Report")
+    st.markdown(st.session_state.site_report_text)
 
 with tab2:
     st.subheader("🔮 Executive Graphical Timeline")
@@ -671,17 +402,18 @@ with tab3:
         sf_rate = row["screen_failure_rate"]
 
         if orig <= 1.0 or sf_rate >= 0.40 or orig < pred:
-            site_metrics = (
-    st.session_state.metrics
-    .get_ai_metrics(s_id)
-)
+            live_health = "Poor"
+        elif orig <= 3.0 or sf_rate >= 0.28:
+            live_health = "Fair"
+        else:
+            efficiency_ratio = pred / orig if orig > 0 else 0
+            if efficiency_ratio >= 0.80 and sf_rate <= 0.20:
+                live_health = "Excellent"
+            elif efficiency_ratio >= 0.65 and sf_rate <= 0.25:
+                live_health = "Good"
+            else:
+                live_health = "Fair"
 
-live_health = site_metrics["health"]
-
-edited_df_tab3.at[
-    idx,
-    "site_health"
-] = live_health
         edited_df_tab3.at[idx, "site_health"] = live_health
         site_target = int(global_target * weights[idx])
         site_enrolled = int(global_enrolled * weights[idx])
@@ -737,29 +469,9 @@ edited_df_tab3.at[
     user_diagnostic_query = st.text_input("Enter your diagnostic question here:", key="diagnostic_query_input", placeholder="e.g., Explain the poor health score of SITE-002 based on these numbers")
 
     if st.button("🔍 Run Diagnostic Report", type="primary", key="trigger_diagnostic"):
-
-    if not user_diagnostic_query.strip():
-
-        st.error("Please enter a question first.")
-
-    else:
-
-        with st.spinner("Clinical AI is analyzing..."):
-
-           history = st.session_state.conversation.messages
-
-if history:
-
-    st.markdown("---")
-
-    st.subheader("Conversation")
-
-    for msg in history:
-
-        with st.chat_message(msg["role"]):
-
-            st.write(msg["message"])
-
-        st.info("🎯 AI Root-Cause Evaluation")
-
-        st.markdown(diagnostic_response)
+        if not user_diagnostic_query.strip():
+            st.error("Please enter a question first.")
+        else:
+            diagnostic_response = run_diagnostic_report(user_diagnostic_query, protocol_restrictions, df_breakdown, edited_df_tab3)
+            st.info("🎯 **AI 5 Whys Root-Cause Audit Evaluation:**")
+            st.markdown(diagnostic_response)
